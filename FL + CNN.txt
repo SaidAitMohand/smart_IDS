@@ -1,0 +1,123 @@
+from google.colab import files
+import pandas as pd
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+import numpy as np
+
+# 1️⃣ Téléverser le fichier
+uploaded = files.upload()
+filename = list(uploaded.keys())[0]
+print("Nom du fichier :", filename)
+
+# 2️⃣ Colonnes KDD
+columns = [
+"duration","protocol_type","service","flag","src_bytes","dst_bytes",
+"land","wrong_fragment","urgent","hot","num_failed_logins",
+"logged_in","num_compromised","root_shell","su_attempted",
+"num_root","num_file_creations","num_shells","num_access_files",
+"num_outbound_cmds","is_host_login","is_guest_login","count",
+"srv_count","serror_rate","srv_serror_rate","rerror_rate",
+"srv_rerror_rate","same_srv_rate","diff_srv_rate",
+"srv_diff_host_rate","dst_host_count","dst_host_srv_count",
+"dst_host_same_srv_rate","dst_host_diff_srv_rate",
+"dst_host_same_src_port_rate","dst_host_srv_diff_host_rate",
+"dst_host_serror_rate","dst_host_srv_serror_rate",
+"dst_host_rerror_rate","dst_host_srv_rerror_rate","label"
+]
+
+# 3️⃣ Lecture du fichier
+train = pd.read_csv(filename, names=columns, sep=',', header=None, index_col=False)
+
+# 4️⃣ Supprimer les doublons
+train = train.drop_duplicates()
+
+# 5️⃣ Vérifier les valeurs de label avant encodage
+print("Labels uniques avant encodage :", train['label'].unique())
+
+# 6️⃣ Encodage des colonnes catégorielles
+encoder = LabelEncoder()
+for col in ['protocol_type', 'service', 'flag']:
+    train[col] = encoder.fit_transform(train[col].astype(str))
+
+# 7️⃣ Transformer le label en binaire (normal=0, attaque=1)
+train['label'] = train['label'].astype(str)
+train['label'] = train['label'].apply(lambda x: 0 if 'normal' in x.lower() else 1)
+
+# Vérifier la distribution après encodage
+print("Distribution des classes après encodage :\n", train['label'].value_counts())
+
+# 8️⃣ Séparation features / label
+X = train.drop('label', axis=1)
+y = train['label']
+
+# 9️⃣ Conversion en float
+X = X.apply(pd.to_numeric, errors='coerce')
+X = X.fillna(0)  # remplacer NaN par 0 si nécessaire
+
+# 10️⃣ Normalisation
+scaler = MinMaxScaler()
+X = scaler.fit_transform(X)
+
+# 11️⃣ Reshape pour CNN
+X = X.reshape(X.shape[0], X.shape[1], 1)
+
+# 12️⃣ Split train/test pour évaluation
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+# 13️⃣ CNN
+def create_model():
+  from tensorflow.keras.models import Sequential
+  from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense
+
+  model = Sequential()
+  model.add(Conv1D(32, 3, activation='relu', input_shape=(X_train.shape[1],1)))
+  model.add(MaxPooling1D(2))
+  model.add(Flatten())
+  model.add(Dense(64, activation='relu'))
+  model.add(Dense(1, activation='sigmoid'))
+
+  model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+  return model
+
+# Diviser les donnees sur des clients IOT
+num_clients = 5
+
+X_splits = np.array_split(X_train, num_clients)
+y_splits = np.array_split(y_train, num_clients)
+
+def average_weights(weights_list):
+  avg_weights = []
+
+  for weights in zip(*weights_list):
+    avg_weights.append(np.mean(weights, axis=0))
+
+  return avg_weights
+
+global_model = create_model()
+
+rounds = 5
+
+for r in range(rounds):
+    client_weights = []
+
+    for i in range(num_clients):
+        model = create_model()
+        
+        # chaque client commence avec le modèle global
+        model.set_weights(global_model.get_weights())
+        
+        # entraînement local
+        model.fit(X_splits[i], y_splits[i], epochs=1, batch_size=32, verbose=0)
+        
+        client_weights.append(model.get_weights())
+
+    # agrégation
+    new_weights = average_weights(client_weights)
+    global_model.set_weights(new_weights)
+
+    print(f"✅ Round {r+1} terminé")
+
+loss, acc = global_model.evaluate(X_test, y_test)
+print("🔥 Accuracy globale :", acc)
+
