@@ -10,6 +10,13 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras.models import Model
 
+""" this files contains the client code for the federated learning process. 
+It defines the IDSClient class that implements the necessary methods for training and evaluating
+ the autoencoder model on the client's local data. The client also trains
+   a local MLP classifier on the attack data and evaluates the overall IDS performance on the test set.
+   Before running this code, ensure that the server is running and that the dataset files are correctly placed and paths updated.
+"""
+
 # =========================
 # CONFIG
 # =========================
